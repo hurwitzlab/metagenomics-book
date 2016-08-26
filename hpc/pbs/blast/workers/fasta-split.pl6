@@ -2,19 +2,20 @@
 
 subset IO::Directory of Str where *.IO.d;
 
-sub MAIN (IO::Directory :$src-dir!, :$dest-dir!, Int :$max=50000) {
+sub MAIN (IO::Directory :$src-dir!, :$dest-dir!, Int :$max=50000, Bool :v(:$verbose)) {
+    my &verbose = $verbose ?? &note !! -> *@ {};
     die "dest-dir must be a directory" if $dest-dir.IO.e && $dest-dir !~~ IO::Directory;
     mkdir $dest-dir unless $dest-dir.IO.d;
 
     for dir($src-dir) -> $file {
-        note "src-file: $file";
+        verbose "src-file: $file";
         my @dest-file-handles = lazy gather {
             # filenames are just strings. We can reverse them to make the last .
             # the first and use subst to replace only the first .
             my $numbered-file-name = $file.basename.flip.subst('.', '.1000-').flip;
 
             loop {
-                note $numbered-file-name;
+                verbose "dest-file: $numbered-file-name";
                 take open($dest-dir.IO.child($numbered-file-name), :w);
                 # The succ method of Perl 6 is quite clever.
                 $numbered-file-name.=succ;
