@@ -2,21 +2,26 @@
 
 subset IO::Directory of Str where *.IO.d;
 
-sub MAIN (IO::Directory :$src-dir!, IO::Directory :$dest-dir!, Int :$max=50000) {
+sub MAIN (IO::Directory :$src-dir!, :$dest-dir!, Int :$max=50000) {
+    die "dest-dir must be a directory" if $dest-dir.IO.e && $dest-dir !~~ IO::Directory;
     mkdir $dest-dir unless $dest-dir.IO.d;
 
     for dir($src-dir) -> $file {
-        my &next-fh = sub {
-            state $file-num = 1;
-            my $ext      = '.' ~ $file.extension;
-            my $basename = $file.basename.subst(/$ext $/, '');
-            open $*SPEC.catfile(
-                $dest-dir, 
-                sprintf('%s-%03d%s', $basename, $file-num++, $ext)
-            ), :w;
-        };
+        note "src-file: $file";
+        my @dest-file-handles = lazy gather {
+            # filenames are just strings. We can reverse them to make the last .
+            # the first and use subst to replace only the first .
+            my $numbered-file-name = $file.basename.flip.subst('.', '.1000-').flip;
 
-        my $out-fh = next-fh();
+            loop {
+                note $numbered-file-name;
+                take open($dest-dir.IO.child($numbered-file-name), :w);
+                # The succ method of Perl 6 is quite clever.
+                $numbered-file-name.=succ;
+            }
+        }
+
+        my $out-fh = shift @dest-file-handles;
         my @buffer;
         my $i = 0;
         for $file.IO.lines -> $line {
@@ -26,7 +31,7 @@ sub MAIN (IO::Directory :$src-dir!, IO::Directory :$dest-dir!, Int :$max=50000) 
             if $i == $max {
                 $out-fh.put(@buffer.join("\n")) if @buffer;
                 $out-fh.close;
-                $out-fh = next-fh();
+                $out-fh = shift @dest-file-handles;
                 $i      = 0;
                 @buffer = ();
             }
