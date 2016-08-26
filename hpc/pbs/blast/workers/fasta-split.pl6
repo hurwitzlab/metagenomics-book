@@ -5,7 +5,7 @@ subset IO::Directory of Str where *.IO.d;
 sub MAIN (IO::Directory :$src-dir!, :$dest-dir!, Int :$max=50000, Bool :v(:$verbose)) {
     my &verbose = $verbose ?? &note !! -> *@ {};
     die "dest-dir must be a directory" if $dest-dir.IO.e && $dest-dir !~~ IO::Directory;
-    mkdir $dest-dir unless $dest-dir.IO.d;
+    mkdir $dest-dir unless $dest-dir ~~ IO::Directory;
 
     for dir($src-dir) -> $file {
         verbose "src-file: $file";
