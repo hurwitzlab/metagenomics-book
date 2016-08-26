@@ -2,16 +2,16 @@
 
 subset IO::Directory of Str where *.IO.d;
 
-sub MAIN (IO::Directory :$in-dir!, IO::Directory :$out-dir!, Int :$max=50000) {
-    mkdir $out-dir unless $out-dir.IO.d;
+sub MAIN (IO::Directory :$src-dir!, IO::Directory :$dest-dir!, Int :$max=50000) {
+    mkdir $dest-dir unless $dest-dir.IO.d;
 
-    for dir($in-dir) -> $file {
+    for dir($src-dir) -> $file {
         my &next-fh = sub {
             state $file-num = 1;
             my $ext      = '.' ~ $file.extension;
             my $basename = $file.basename.subst(/$ext $/, '');
             open $*SPEC.catfile(
-                $out-dir, 
+                $dest-dir, 
                 sprintf('%s-%03d%s', $basename, $file-num++, $ext)
             ), :w;
         };
