@@ -24,7 +24,8 @@ Ken Youens-Clark <kyclark@email.arizona.edu>
 =end pod
 
 sub MAIN (Str $input!) {
-    my $dna = $input.IO.e ?? $input.IO.slurp !! $input;
+    die "cannot work with directories" of $input.IO.d;
+    my $dna = $input.IO.f ?? $input.IO.slurp !! $input;
     my $bag = $dna.lc.comb.Bag;
     put join ' ', $bag<a c g t>
 }
