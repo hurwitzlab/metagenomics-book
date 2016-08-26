@@ -1,6 +1,8 @@
 #!/usr/bin/env perl6
 
-sub MAIN (Str :$in-dir! where *.IO.d, Str :$out-dir!, Int :$max=50000) {
+subset IO::Directory of Str where *.IO.d;
+
+sub MAIN (IO::Directory :$in-dir!, IO::Directory :$out-dir!, Int :$max=50000) {
     mkdir $out-dir unless $out-dir.IO.d;
 
     for dir($in-dir) -> $file {
