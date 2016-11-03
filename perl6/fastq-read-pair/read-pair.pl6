@@ -1,29 +1,21 @@
 #!/usr/bin/env perl6
 
-class Fastq {
+class Fastq-Entry {
     has Str $.header;
     has Str $.seq;
     has Str $.qual;
-    has IO::Handle $.fh;
     has Str $.name = "";
     has Int $.num  = 0;
     has Int $.dir  = 0;
 
-    submethod BUILD (Str :$header, Str :$seq, Str :$qual, IO::Handle :$fh) {
-        $!header = $header;
-        $!seq    = $seq;
-        $!qual   = $qual;
-        $!fh     = $fh;
-
-        # isolate ID from header, take off "@"
-        (my $id = $header) ~~ s/\s.*//;
-        $id ~~ s/^ '@'//;
-
-        # e.g., "SRR1647045.4.1" where 4 is read num, 1 is direction
-        if my $match = $id ~~ /(.*) '.' (\d+) '.' (<[12]>)$/ {
-            $!name = ~$match[0];
-            $!num  = +$match[1];
-            $!dir  = +$match[2];
+    submethod BUILD (Str :$!header, Str :$!seq, Str :$!qual) { 
+        # Extract name, read number and direction from header, e.g:
+        #   header: @SRR1647045.4.1 4 length=69
+        #       name = SRR1647045
+        #       num = 4   (read number)
+        #       dir = 1   (direction)
+        if my $match = $!header ~~ /^\s* '@' (\w+) '.' (\d+) '.' (<[12]>) \s/ {
+            ($!name, $!num, $!dir) = (~$match[0], +$match[1], +$match[2]);
         }
     }
 
@@ -32,82 +24,95 @@ class Fastq {
     }
 }
 
+class Fastq {
+    has Str $.filename;
+    has Str $.outfilename;
+    has Str $.out-dir;
+    has Int $.dir;
+    has IO::Handle $!in_fh;
+    has IO::Handle $!out_fh;
+    has IO::Handle $.singleton_fh;
+
+    submethod BUILD (Str :$!filename, Str :$!out-dir, Int :$!dir ){
+        # e.g., SRR1647045_1.trim.fastq => SRR1647045_R1.fastq
+        (my $basename = $!filename) ~~ s/'_'<[12]> .*//;
+        my $basepath = $*SPEC.catfile($!out-dir, $basename );
+
+        $!outfilename = $basepath ~ '_R' ~ $!dir ~ '.fastq';
+        my $singleton_fn = $basepath ~ '_singletons.fastq';
+
+        mkdir $!out-dir unless $!out-dir.IO.d;
+
+        $!in_fh = open $!filename;
+        $!out_fh = open $!outfilename, :w;
+        $!singleton_fh = open $singleton_fn, :w if $!dir == 1;
+    }
+
+
+    method next {
+        return Nil if $!in_fh.eof;
+
+        my ($header, $seq="", $="", $qual="") = $!in_fh.lines;
+
+        return Fastq-Entry.new(
+            header => ~$header,
+            seq    => ~$seq,
+            qual   => ~$qual,
+        );
+    }
+
+    method write( Fastq-Entry $fastq ) {
+        $!out_fh.put( $fastq );
+    }
+
+    # This is clumsy, but we don't want two filehandles to the singleton file
+    method write-singleton( Fastq-Entry $fastq ) {
+        die "singleton can only be called on direction 1" if $!dir != 1;
+        $.singleton_fh.put( $fastq );
+    }
+}
+
 # --------------------------------------------------
 subset File of Str where *.IO.f;
 sub MAIN (
-    File :$r1!, 
-    File :$r2!, 
+    File :$r1!,
+    File :$r2!,
     Str :$out-dir=$*SPEC.catdir($*CWD, 'out')
 ) {
-    mkdir $out-dir unless $out-dir.IO.d;
-    my $fh1_in = open $r1;
-    my $fh2_in = open $r2;
+    my $fastq1 = Fastq.new( filename => $r1, out-dir => $out-dir, dir => 1 );
+    my $fastq2 = Fastq.new( filename => $r2, out-dir => $out-dir, dir => 2 );
 
-    # e.g., SRR1647045_1.trim.fastq => SRR1647045_R1.fastq
-    (my $basename = $r1) ~~ s/'_1' .*//;
-    my $r1_out    = $*SPEC.catfile($out-dir, $basename ~ '_R1.fastq');
-    my $r2_out    = $*SPEC.catfile($out-dir, $basename ~ '_R2.fastq');
-    my $sing_out  = $*SPEC.catfile($out-dir, $basename ~ '_singletons.fastq');
-    my $r1_fh     = open $r1_out, :w;
-    my $r2_fh     = open $r2_out, :w;
-    my $sing_fh   = open $sing_out, :w;
-
-    my $i = 0;
+    my ($read1, $read2) = ($fastq1.next, $fastq2.next);
     loop {
-        #put "top o' the loop";
-        my $read1 = read_fq($fh1_in);
-        my $read2 = read_fq($fh2_in);
-
-        last unless $read1 && $read2;
-
-        #put "read1 ({$read1.num}) read2 ({$read2.num})";
+        last unless $read1 || $read2;
 
         given ($read1, $read2) {
-            when (Fastq, Nil) { $sing_fh.put(~$read1) }
+            when (Fastq-Entry, Nil) { $fastq1.write-singleton($read1) }
 
-            when (Nil, Fastq) { $sing_fh.put(~$read2) }
+            when (Nil, Fastq-Entry) { $fastq1.write-singleton($read2) }
 
-            when (Fastq, Fastq) {
+            when (Fastq-Entry, Fastq-Entry) {
+
                 if $read1.num == $read2.num {
-                    $r1_fh.put(~$read1);
-                    $r2_fh.put(~$read2);
+                    $fastq1.write( $read1 );
+                    $fastq2.write( $read2 );
                 }
                 else {
-                    my ($low, $high) = ($read1, $read2).sort(*.num);
-                    loop {
-                        #put "low ({$low.num}) high ({$high.num})";
-                        if $low.num == $high.num {
-                            my ($r1, $r2) = 
-                              $low.dir == 1 ?? ($low, $high) !! ($high, $low);
-                            $r1_fh.put(~$r1);
-                            $r2_fh.put(~$r2);
-                            last;
-                        }
-                        else {
-                            $sing_fh.put($low);
-                            $low = read_fq($low.fh);
-                        }
+                    if $read1.num < $read2.num {
+                        $fastq1.write-singleton( $read1 );
+                        $read1 = $fastq1.next;
+                    } else {
+                        $fastq1.write-singleton( $read2 );
+                        $read2 = $fastq2.next;
                     }
+                    redo;
                 }
             }
+
         }
+
+        ($read1, $read2) = ($fastq1.next, $fastq2.next);
     }
 
     put "Done.";
-}
-
-sub read_fq (IO::Handle $fh) {
-    if $fh.eof {
-        return Nil;
-    }
-    else {
-        my ($header, $seq="", $="", $qual="") = $fh.lines;
-
-        return Fastq.new(
-            header => ~$header, 
-            seq    => ~$seq, 
-            qual   => ~$qual, 
-            fh     => $fh
-        );
-    }
 }
